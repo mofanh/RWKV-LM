@@ -10,7 +10,7 @@ So it's combining the best of RNN and transformer - **great performance, fast in
 
 **World 7B** (supports 100+ world languages) Demo: https://huggingface.co/spaces/BlinkDL/RWKV-World-7B
 
-**ChatRWKV:** with "stream" and "split" strategies and INT8. **3G VRAM is enough to run RWKV 14B :)** https://github.com/BlinkDL/ChatRWKV
+**RWKV GUI** https://github.com/josStorer/RWKV-Runner with one-click install and API
 
 **Download RWKV-4 0.1/0.4/1.5/3/7/14B weights**: https://huggingface.co/BlinkDL
 
@@ -31,15 +31,17 @@ out, state = model.forward([1563], state)           # RNN has state (use deepcop
 out, state = model.forward([310, 247], state)
 print(out.detach().cpu().numpy())                   # same result as above
 ```
-**Cool Community RWKV Projects (check them!)**:
+**Cool Community RWKV Projects (check them!)**: https://www.rwkv.com/
 
-https://github.com/saharNooby/rwkv.cpp fast i4 i8 fp16 fp32 CPU inference using [ggml](https://github.com/ggerganov/ggml)
+https://github.com/saharNooby/rwkv.cpp Fast CPU/cuBLAS/CLBlast inference: int4/int8/fp16/fp32
 
-https://github.com/harrisonvanderbyl/rwkv-cpp-cuda fast windows/linux & cuda/rocm/vulkan GPU inference (no need for python & pytorch)
+https://github.com/cgisky1980/ai00_rwkv_server Fastest GPU inference API with vulkan (good for nvidia/amd/intel)
 
-https://github.com/Blealtan/RWKV-LM-LoRA LoRA fine-tuning
+https://github.com/harrisonvanderbyl/rwkv-cpp-cuda Fast GPU inference with cuda/amd/vulkan
 
-https://github.com/josStorer/RWKV-Runner cool GUI
+https://github.com/Blealtan/RWKV-LM-LoRA LoRA finetuning
+
+https://github.com/TheRamU/Fay/blob/main/README_EN.md Digital Assistant with RWKV
 
 More RWKV projects: https://github.com/search?o=desc&q=rwkv&s=updated&type=Repositories
 
@@ -177,7 +179,55 @@ I suggest firstly collect the mean+stdev statistics of each channel of each vect
 
 ## Towards RWKV-5 (just to record some new ideas)
 
-### Some ideas
+### Lastest Design
+
+RWKV-5 is multi-head and here shows one head. There is also a LayerNorm for each head (hence actually GroupNorm).
+
+$`
+\begin{array}{|l|l|l|}
+\hline & {\text { RWKV-4 (pointwise multiplication) }} & \text { RWKV-5 with matrix-valued states } \\
+\hline \mathrm{y}_0 & \mathrm{r}_0 \frac{\mathrm{uk} \mathrm{v}_0}{\mathrm{uk_{0 }}} & \mathrm{r}_0\left(\mathrm{uk}_0^{\dagger} \mathrm{v}_0\right) \\
+\hline \mathrm{y}_1 & \mathrm{r}_1 \frac{\mathrm{uk}_1 \mathrm{v}_1+\mathrm{k}_0 \mathrm{v}_0}{\mathrm{uk}_1+\mathrm{k}_0} & \mathrm{r}_1\left(\mathrm{uk}_1^{\dagger} \mathrm{v}_1+\mathrm{k}_0^{\dagger} \mathrm{v}_0\right) \\
+\hline \mathrm{y}_2 & \mathrm{r}_2 \frac{\mathrm{uk}_2 \mathrm{v}_2+\mathrm{k}_1 \mathrm{v}_1+\mathrm{wk}_0 \mathrm{v}_0}{\mathrm{uk}_2+\mathrm{k}_1+\mathrm{wk}_0} & \mathrm{r}_2\left(\mathrm{uk}_2^{\dagger} \mathrm{v}_2+\mathrm{k}_1^{\dagger} \mathrm{v}_1+\mathrm{wk}_0^{\dagger} \mathrm{v}_0\right) \\
+\hline \mathrm{y}_3 & \mathrm{r}_3 \frac{\mathrm{uk}_3 \mathrm{v}_3+\mathrm{k}_2 \mathrm{v}_2+\mathrm{wk}_1 \mathrm{v}_1+\mathrm{w}^2 \mathrm{k}_0 \mathrm{v}_0}{\mathrm{uk} \mathrm{k}_3+\mathrm{k}_2+\mathrm{wk}_1+\mathrm{w}^2 \mathrm{k}_0} & \mathrm{r}_3\left(\mathrm{uk}_3^{\dagger} \mathrm{v}_3+\mathrm{k}_2^{\dagger} \mathrm{v}_2+\mathrm{wk}_1^{\dagger} \mathrm{v}_1+\mathrm{w}^2 \mathrm{k}_0^{\dagger} \mathrm{v}_0\right) \\
+\hline
+\end{array}`$
+
+$`\left[\mathrm{y}_{00} \ldots \mathrm{y}_{0 c}\right]=\left[\mathrm{r}_{00} \ldots \mathrm{r}_{0 c}\right]\left(\mathrm{u}\left[\begin{array}{ccc}
+\mathrm{k}_{00} \mathrm{v}_{00} & \cdots & \mathrm{k}_{00} \mathrm{v}_{0 \mathrm{c}} \\
+\vdots & \ddots & \vdots \\
+\mathrm{k}_{0 c} \mathrm{v}_{00} & \cdots & \mathrm{k}_{0 c} \mathrm{v}_{0 \mathrm{c}}
+\end{array}\right]\right)`$
+
+$`\left[\mathrm{y}_{10} \ldots \mathrm{y}_{1 \mathrm{c}}\right]=\left[\mathrm{r}_{10} \ldots \mathrm{r}_{1 \mathrm{c}}\right]\left(\mathrm{u}\left[\begin{array}{ccc}
+\mathrm{k}_{10} \mathrm{v}_{10} & \cdots & \mathrm{k}_{10} \mathrm{v}_{1 \mathrm{c}} \\
+\vdots & \ddots & \vdots \\
+\mathrm{k}_{1 \mathrm{c}} \mathrm{v}_{10} & \cdots & \mathrm{k}_{1 \mathrm{c}} \mathrm{v}_{1 \mathrm{c}}
+\end{array}\right]+\left[\begin{array}{ccc}
+\mathrm{k}_{00} \mathrm{v}_{00} & \cdots & \mathrm{k}_{00} \mathrm{v}_{0 \mathrm{c}} \\
+\vdots & \ddots & \vdots \\
+\mathrm{k}_{0 \mathrm{c}} \mathrm{v}_{00} & \cdots & \mathrm{k}_{0 \mathrm{c}} \mathrm{v}_{0 \mathrm{c}}
+\end{array}\right]\right)`$
+
+$`\left[\mathrm{y}_{20} \ldots \mathrm{y}_{2 \mathrm{c}}\right]=\left[\mathrm{r}_{20} \ldots \mathrm{r}_{2 \mathrm{c}}\right]\left(\mathrm{u}\left[\begin{array}{ccc}
+\mathrm{k}_{20} \mathrm{v}_{20} & \cdots & \mathrm{k}_{20} \mathrm{v}_{2 \mathrm{c}} \\
+\vdots & \ddots & \vdots \\
+\mathrm{k}_{2 \mathrm{c}} \mathrm{v}_{20} & \cdots & \mathrm{k}_{2 \mathrm{c}} \mathrm{v}_{2 \mathrm{c}}
+\end{array}\right]+\left[\begin{array}{ccc}
+\mathrm{k}_{10} \mathrm{v}_{10} & \cdots & \mathrm{k}_{10} \mathrm{v}_{1 \mathrm{c}} \\
+\vdots & \ddots & \vdots \\
+\mathrm{k}_{1 c} \mathrm{v}_{10} & \cdots & \mathrm{k}_{1 \mathrm{c}} \mathrm{v}_{1 \mathrm{c}}
+\end{array}\right]+\mathrm{w}\left[\begin{array}{ccc}
+\mathrm{k}_{00} \mathrm{v}_{00} & \cdots & \mathrm{k}_{00} \mathrm{v}_{0 \mathrm{c}} \\
+\vdots & \ddots & \vdots \\
+k_{0 c} v_{00} & \cdots & k_{0 c} v_{0 c}
+\end{array}\right]\right)`$
+
+### RWKV-6
+
+Use parallelized mode to quickly generate the state, then use a finetuned full RNN (the layers of token n can use outputs of all layer of token n-1) for sequential generation.
+
+### Some old ideas
 
 1. Now time decay is like 0.999^T (0.999 is learnable). Change it to something like (0.999^T + 0.1) where 0.1 is learnable too. The 0.1 part will be kept forever. Or, A^T + B^T + C = fast-decay + slow-decay + constant. Can even use different formulas (for example, K^2 instead of e^K for a decay component, or, without normalization).
 

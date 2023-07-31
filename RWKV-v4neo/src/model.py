@@ -134,6 +134,124 @@ else:
 def RUN_CUDA(B, T, C, w, u, k, v):
     return WKV.apply(B, T, C, w, u, k, v)
 
+########################################################################################################
+
+class RWKV_TimeMix_RWKV5_Preview(MyModule):
+    def __init__(self, args, layer_id):
+        super().__init__()
+        self.args = args
+        self.layer_id = layer_id
+        self.ctx_len = args.ctx_len
+        self.n_embd = args.n_embd
+
+        self.head_size = 64
+        self.n_head = self.n_embd // self.head_size
+        assert self.n_embd % self.n_head == 0
+
+        self.chunk_len = 512
+        assert self.ctx_len % self.chunk_len == 0
+
+        with torch.no_grad():
+            ratio_0_to_1 = layer_id / (args.n_layer - 1)  # 0 to 1
+            ratio_1_to_almost0 = 1.0 - (layer_id / args.n_layer)  # 1 to ~0
+            ddd = torch.ones(1, 1, args.n_embd)
+            for i in range(args.n_embd):
+                ddd[0, 0, i] = i / args.n_embd
+
+            # fancy time_mix
+            self.time_mix_k = nn.Parameter(torch.pow(ddd, ratio_1_to_almost0))
+            self.time_mix_v = nn.Parameter(torch.pow(ddd, ratio_1_to_almost0) + 0.3 * ratio_0_to_1)
+            self.time_mix_r = nn.Parameter(torch.pow(ddd, 0.5 * ratio_1_to_almost0))
+
+            # fancy time_decay
+            decay_speed = torch.ones(self.n_head)
+            for h in range(self.n_head):
+                decay_speed[h] = -8 + 7 * (h / (self.n_head - 1)) ** (0.7 + 1.3 * ratio_0_to_1)
+            self.time_decay = nn.Parameter(decay_speed)
+            # print(layer_id, self.time_decay.flatten()[:3].cpu().numpy(), '...', self.time_decay.flatten()[-3:].cpu().numpy())
+
+            self.time_first = nn.Parameter(torch.ones(self.n_head) * (-3.0))
+
+        self.time_shift = nn.ZeroPad2d((0, 0, 1, -1))
+        self.receptance = nn.Linear(args.n_embd, args.dim_att, bias=False)
+        self.key = nn.Linear(args.n_embd, args.dim_att, bias=False)
+        self.value = nn.Linear(args.n_embd, args.dim_att, bias=False)
+        self.output = nn.Linear(args.dim_att, args.n_embd, bias=False)
+
+        self.ln_x = nn.GroupNorm(self.n_head, self.n_embd)
+
+    @MyFunction
+    def jit_func(self, x):
+        B, TT, C = x.size()
+
+        xx = self.time_shift(x) # Mix x with the previous timestep to produce xk, xv, xr
+        xk = x * self.time_mix_k + xx * (1 - self.time_mix_k)
+        xv = x * self.time_mix_v + xx * (1 - self.time_mix_v)
+        xr = x * self.time_mix_r + xx * (1 - self.time_mix_r)
+
+        r = self.receptance(xr).view(B, TT, self.n_head, self.head_size).transpose(1, 2)            # BTC -> BHTS
+        k = self.key(xk).view(B, TT, self.n_head, self.head_size).transpose(1, 2).transpose(-2, -1) # BTC -> BHTS -> BHST
+        v = self.value(xv).view(B, TT, self.n_head, self.head_size).transpose(1, 2)                 # BTC -> BHTS
+
+        return r, k, v
+
+    @MyFunction
+    def jit_func_2(self, r, k, v, w, wk, wb, ws):
+        B, H, TT, S = r.size()
+        T = self.chunk_len
+
+        s = torch.zeros(B, H, S, S, device=r.device, dtype=r.dtype)  # state
+        x = torch.zeros(B, H, TT, S, device=r.device, dtype=r.dtype) # output
+
+################################################################################
+########
+        for i in range(TT // T):
+            rr = r[:, :, i*T:i*T+T, :]
+            kk = k[:, :, :, i*T:i*T+T]
+            vv = v[:, :, i*T:i*T+T, :]
+
+            x[:, :, i*T:i*T+T, :] = ((rr @ kk) * w) @ vv  +  (rr @ s) * wb
+
+            s = ws * s + (kk * wk) @ vv
+########
+################################################################################
+        
+        x = x.transpose(1, 2).contiguous().view(B * TT, H*S) # BHTS -> BTHS -> BTC
+        x = self.ln_x(x).view(B, TT, H*S)
+        return self.output(x)
+    
+    def forward(self, x):
+        H = self.n_head
+        T = self.chunk_len
+
+        r, k, v = self.jit_func(x)
+
+        w = torch.exp(-torch.exp(self.time_decay.float())).unsqueeze(-1)
+        u = torch.exp(self.time_first.float()).unsqueeze(-1)
+
+################################################################################
+########
+        ws = w.pow(T).reshape(1, H, 1, 1)
+
+        ind = torch.arange(T-1, -1, -1, device=r.device).unsqueeze(0).repeat(H, 1)
+        w = w.repeat(1, T).pow(ind)
+
+        wk = w.reshape(1, H, 1, T)
+        wb = wk.transpose(-2, -1).flip(2)
+
+        w = torch.cat([w[:, 1:], u], dim=1)
+        w = F.pad(w, (0, T))
+        w = torch.tile(w, [T])
+        w = w[:, :-T].reshape(-1, T, 2 * T - 1)
+        w = w[:, :, T-1:].reshape(1, H, T, T)
+########
+################################################################################
+
+        w = w.to(dtype=r.dtype)
+        wk = wk.to(dtype=r.dtype)
+        wb = wb.to(dtype=r.dtype)
+        ws = ws.to(dtype=r.dtype)
+        return self.jit_func_2(r, k, v, w, wk, wb, ws)
 
 ########################################################################################################
 # RWKV: RWKV Time-mix + RWKV Channel-mix
@@ -325,7 +443,10 @@ class Block(nn.Module):
         if self.layer_id == 0 and self.args.pre_ffn > 0:
             self.ffnPre = RWKV_ChannelMix(args, 0)
         else:
-            self.att = RWKV_TimeMix(args, layer_id)
+            if 'r' in os.environ["RWKV_MY_TESTING"]:
+                self.att = RWKV_TimeMix_RWKV5_Preview(args, layer_id)
+            else:
+                self.att = RWKV_TimeMix(args, layer_id)
 
         if 'g' in os.environ["RWKV_MY_TESTING"]:
             self.ffn = MishGLU(args, layer_id)
@@ -524,6 +645,11 @@ class RWKV(pl.LightningModule):
             idx, targets = batch
             logits = self(idx)
             loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1))
+            # if '0' in os.environ["RWKV_MY_TESTING"]:
+            #     print('logits', logits)
+            #     torch.set_printoptions(threshold=10000)
+            #     print('idx', idx)
+            #     exit(0)
         else:
             idx, targets, mask = batch
             mask = mask.view(-1)
@@ -577,14 +703,22 @@ class RWKV(pl.LightningModule):
             gain = 1.0
             scale = 1.0
             if "ln_" in n or ".ln" in n or "time_" in n or "_mask" in n or "pos_emb" in n or '.mask.' in n:
-                m[n] = p
+                if 'ln_x.weight' in n:
+                    layer_scale = (1+int(n.split('.')[1])) / self.args.n_layer
+                    m[n] = (p * 0.0) + (layer_scale ** 0.5)
+                else:
+                    m[n] = p
             else:
                 if n == "emb.weight":
                     scale = -1 * self.args.lr_init
                 else:
                     if shape[0] > shape[1]:
                         gain = math.sqrt(shape[0] / shape[1])
-                    for kk in [".att.key.", ".att.receptance.", ".att.output.", ".att.key.", ".ffn.value.", ".ffn.receptance.", ".ffnPre.value.", ".ffnPre.receptance.", "head_q.", '.oo.', '.rr.']:
+                    if 'r' in os.environ["RWKV_MY_TESTING"]:
+                        zero = [".att.output.", ".ffn.value.", ".ffn.receptance.", ".ffnPre.value.", ".ffnPre.receptance.", "head_q.", '.oo.', '.rr.']
+                    else:
+                        zero = [".att.key.", ".att.receptance.", ".att.output.", ".ffn.value.", ".ffn.receptance.", ".ffnPre.value.", ".ffnPre.receptance.", "head_q.", '.oo.', '.rr.']
+                    for kk in zero:
                         if kk in n:
                             scale = 0
                     if n == "head.weight":
