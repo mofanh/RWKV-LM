@@ -170,7 +170,10 @@ class RWKV_TimeMix_RWKV5_Preview(MyModule):
             self.time_decay = nn.Parameter(decay_speed)
             # print(layer_id, self.time_decay.flatten()[:3].cpu().numpy(), '...', self.time_decay.flatten()[-3:].cpu().numpy())
 
-            self.time_first = nn.Parameter(torch.ones(self.n_head) * (-3.0))
+            if 'r2' in os.environ["RWKV_MY_TESTING"]:
+                self.time_faaaa = nn.Parameter(torch.ones(self.n_head) * 0.05)
+            else:
+                self.time_first = nn.Parameter(torch.ones(self.n_head) * (-3.0))
 
         self.time_shift = nn.ZeroPad2d((0, 0, 1, -1))
         self.receptance = nn.Linear(args.n_embd, args.dim_att, bias=False)
@@ -227,7 +230,11 @@ class RWKV_TimeMix_RWKV5_Preview(MyModule):
         r, k, v = self.jit_func(x)
 
         w = torch.exp(-torch.exp(self.time_decay.float())).unsqueeze(-1)
-        u = torch.exp(self.time_first.float()).unsqueeze(-1)
+        
+        if 'r2' in os.environ["RWKV_MY_TESTING"]:
+            u = self.time_faaaa.float().unsqueeze(-1)
+        else:
+            u = torch.exp(self.time_first.float()).unsqueeze(-1)
 
 ################################################################################
 ########
@@ -460,6 +467,10 @@ class Block(nn.Module):
             self.tiny_v = nn.Linear(args.n_embd, args.n_embd, bias=False)
             self.register_buffer("tiny_mask", torch.tril(torch.ones(args.ctx_len, args.ctx_len)))
 
+        if args.dropout > 0:
+            self.drop0 = nn.Dropout(p = args.dropout)
+            self.drop1 = nn.Dropout(p = args.dropout)
+        
     def forward(self, x, x_emb=None):
         args = self.args
         B, T, C = x.size()
@@ -469,11 +480,18 @@ class Block(nn.Module):
                 pos_emb = (self.pos_emb_x + self.pos_emb_y).reshape(T+1, -1)[:-1,:]
                 x = x + pos_emb
 
-        if self.layer_id == 0 and args.pre_ffn > 0:
-            x = x + self.ffnPre(self.ln1(x))
+        if self.args.dropout == 0:
+            if self.layer_id == 0 and args.pre_ffn > 0:
+                x = x + self.ffnPre(self.ln1(x))
+            else:
+                x = x + self.att(self.ln1(x))
+            x = x + self.ffn(self.ln2(x))
         else:
-            x = x + self.att(self.ln1(x))
-        x = x + self.ffn(self.ln2(x))
+            if self.layer_id == 0 and args.pre_ffn > 0:
+                x = self.drop0(x + self.ffnPre(self.ln1(x)))
+            else:
+                x = self.drop0(x + self.att(self.ln1(x)))
+            x = self.drop1(x + self.ffn(self.ln2(x)))
 
         if args.tiny_att_dim > 0 and self.layer_id == args.tiny_att_layer:
             xx = self.tiny_ln(x)
@@ -526,6 +544,8 @@ class RWKV(pl.LightningModule):
             self.head_q = nn.Linear(args.n_embd, args.head_qk, bias=False)
             self.head_k = nn.Linear(args.n_embd, args.head_qk, bias=False)
             self.register_buffer("copy_mask", torch.tril(torch.ones(args.ctx_len, args.ctx_len)))
+        if args.dropout > 0:
+            self.drop0 = nn.Dropout(p = args.dropout)
 
     def configure_optimizers(self):
         args = self.args
@@ -541,6 +561,11 @@ class RWKV(pl.LightningModule):
                 else:
                     lr_1x.add(n)
             elif ("time_decay" in n) and (args.layerwise_lr > 0):
+                if args.my_pile_stage == 2:
+                    lr_3x.add(n)
+                else:
+                    lr_2x.add(n)
+            elif ("time_faaaa" in n) and (args.layerwise_lr > 0):
                 if args.my_pile_stage == 2:
                     lr_3x.add(n)
                 else:
@@ -605,6 +630,8 @@ class RWKV(pl.LightningModule):
         x = self.emb(idx)
         x_emb = x
 
+        if args.dropout > 0:
+            x = self.drop0(x)
         if args.tiny_att_dim > 0:
             for block in self.blocks:
                 if args.grad_cp == 1:
