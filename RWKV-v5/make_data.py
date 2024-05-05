@@ -31,29 +31,43 @@ where the data is repeated 3 times (each time with different shuffle)
 ########################################################################################################
 
 from tokenizer.rwkv_tokenizer import TRIE_TOKENIZER
+
 tokenizer = TRIE_TOKENIZER("tokenizer/rwkv_vocab_v20230424.txt")
 from src.binidx import MMapIndexedDataset
+
+
 def index_file_path(prefix_path):
     return prefix_path + ".idx"
+
+
 def data_file_path(prefix_path):
     return prefix_path + ".bin"
+
+
 class MMapIndexedDatasetBuilder(object):
     def __init__(self, out_file, dtype=np.uint16):
         self._data_file = open(out_file, "wb")
         self._dtype = dtype
         self._sizes = []
         self._doc_idx = [0]
+
     def add_item(self, np_array):
         assert np_array.dtype == self._dtype
         self._data_file.write(np_array.tobytes(order="C"))
         self._sizes.append(np_array.size)
+
     def end_document(self):
         self._doc_idx.append(len(self._sizes))
+
     def finalize(self, index_file):
         self._data_file.close()
         with MMapIndexedDataset.Index.writer(index_file, self._dtype) as index:
             index.write(self._sizes, self._doc_idx)
+
+
 cnt = 0
+
+
 def add_raw(raw):
     global builder, cnt
     out = tokenizer.encode(raw)
@@ -66,6 +80,8 @@ def add_raw(raw):
     if cnt % 500 == 0:
         print(cnt, end=" ", flush=True)
     cnt += 1
+
+
 def is_prime(n):
     if n <= 1:
         return False
@@ -80,6 +96,7 @@ def is_prime(n):
         i += 6
     return True
 
+
 ########################################################################################################
 
 N_EPOCH = int(sys.argv[2].strip())
@@ -87,6 +104,15 @@ IN_FILE = sys.argv[1].strip()
 OUT_NAME = os.path.splitext(os.path.basename(IN_FILE))[0]
 CTX_LEN = int(sys.argv[3].strip())
 TEMP_FILE = "make_data_temp.jsonl"
+
+# 使用vscode debug时候使用
+# N_EPOCH = 3  # 训练的轮数，之前是 sys.argv[2]
+# IN_FILE = "demo.jsonl"  # 输入文件的路径，之前是 sys.argv[1]
+# OUT_NAME = os.path.splitext(os.path.basename(IN_FILE))[
+#     0
+# ]  # 输出文件的基础名称，没有扩展名
+# CTX_LEN = 4096  # 上下文长度，之前是 sys.argv[3]
+# TEMP_FILE = "make_data_temp.jsonl"  # 临时文件的名称
 
 print(f"### Convert {IN_FILE} to {OUT_NAME}.bin/idx...")
 
@@ -108,7 +134,8 @@ file.close()
 print("### Building binidx...")
 
 builder = MMapIndexedDatasetBuilder(f"{OUT_NAME}.bin")
-with fileinput.input(TEMP_FILE, encoding="utf-8") as ffff:
+# with fileinput.input(TEMP_FILE, encoding="utf-8") as ffff:
+with open(TEMP_FILE, "r", encoding="utf-8") as ffff:
     for line in ffff:
         x = json.loads(line)["text"]
         add_raw(x)
@@ -147,7 +174,9 @@ for idx in TODO:
     else:
         print(tokenizer.decode(dix))
 
-print(f"{'-'*80}\n### Final {OUT_NAME}.bin/idx has {data_size} tokens, {data_len} items. Dtype {data._index.dtype}")
+print(
+    f"{'-'*80}\n### Final {OUT_NAME}.bin/idx has {data_size} tokens, {data_len} items. Dtype {data._index.dtype}"
+)
 
 if data_size >= CTX_LEN * 3:
     n_chunk = int(data_size // CTX_LEN) - 1

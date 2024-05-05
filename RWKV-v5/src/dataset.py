@@ -49,10 +49,12 @@ class MyDataset(Dataset):
                 self.samples_per_epoch = args.epoch_steps * args.real_bsz
                 assert self.samples_per_epoch == 40320
                 rank_zero_info(f"########## Pile 20b-tokenized stage {args.my_pile_stage} ##########")
+                print(f"\ndataset size:{self.data_size}\nargs.ctx_len:{args.ctx_len}\n")
                 dataset_slot = self.data_size // args.ctx_len
                 if args.my_pile_stage != 4:
                     assert MaybeIsPrime(args.magic_prime)
                     assert args.magic_prime % 3 == 2
+                    print(f"\nargs.magic_prime:{args.magic_prime}\ndataset_slot:{dataset_slot}\n")
                     assert args.magic_prime / dataset_slot > 0.9 and args.magic_prime / dataset_slot <= 1
         elif args.data_type == "numpy":
             self.data = np.load(args.data_file).astype("int")

@@ -1,0 +1,53 @@
+{
+    // 使用 IntelliSense 了解相关属性。 
+    // 悬停以查看现有属性的描述。
+    // 欲了解更多信息，请访问: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python 调试程序: 当前文件",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal",
+            "args": [
+                "--load_model", "/root/models/rwkv-6/rwkv-init.pth",
+                "--wandb", "rwkv-6-tcm001",
+                "--proj_dir", "out/",
+                "--my_testing", "x060",
+                "--ctx_len", "512",
+                "--my_pile_stage", "3",
+                "--epoch_count", "999999",
+                "--epoch_begin", "0",
+                "--data_file", "/root/data",
+                "--my_exit_tokens", "64836",
+                "--magic_prime", "11",
+                "--num_nodes", "1",
+                "--micro_bsz", "16",
+                "--n_layer", "12",
+                "--n_embd", "768",
+                "--pre_ffn", "0",
+                "--head_qk", "0",
+                "--lr_init", "6e-4",
+                "--lr_final", "6e-5",
+                "--warmup_steps", "10",
+                "--beta1", "0.9",
+                "--beta2", "0.99",
+                "--adam_eps", "1e-8",
+                "--my_pile_edecay", "0",
+                "--data_type", "binidx",
+                "--vocab_size", "65536",
+                "--weight_decay", "0.001",
+                "--epoch_save", "10",
+                "--head_size_a", "64",
+                "--accelerator", "gpu",
+                "--devices", "1",
+                "--precision", "bf16",
+                "--strategy", "deepspeed_stage_2",
+                "--grad_cp", "1",
+                "--enable_progress_bar", "True",
+                "--ds_bucket_mb", "2"
+            ],
+        }
+    ]
+}
