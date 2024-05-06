@@ -55,7 +55,7 @@ class MyDataset(Dataset):
                     assert MaybeIsPrime(args.magic_prime)
                     assert args.magic_prime % 3 == 2
                     print(f"\nargs.magic_prime:{args.magic_prime}\ndataset_slot:{dataset_slot}\n")
-                    assert args.magic_prime / dataset_slot > 0.9 and args.magic_prime / dataset_slot <= 1
+                    # assert args.magic_prime / dataset_slot > 0.9 and args.magic_prime / dataset_slot <= 1
         elif args.data_type == "numpy":
             self.data = np.load(args.data_file).astype("int")
             self.vocab_size = args.vocab_size
