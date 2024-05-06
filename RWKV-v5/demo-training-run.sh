@@ -13,8 +13,8 @@
 MODEL_TYPE="x060" # x060 => rwkv-6.0
 # MODEL_TYPE="mamba" # pip install mamba_ssm --upgrade
 #
-N_LAYER="12"
-N_EMBD="768"
+N_LAYER="24"
+N_EMBD="2048"
 #
 CTX_LEN="4096" # !!! change magic_prime if you change ctx_len !!!
 PROJ_DIR="out/L"$N_LAYER"-D"$N_EMBD"-"$MODEL_TYPE # set output folder
@@ -43,7 +43,7 @@ GPU_PER_NODE=1 # number of GPUs per node
 #
 DS_BUCKET_MB=2 # set to 2 for consumer GPUs, set to 200 for A100 / H100 (affects speed & vram usage)
 #
-python train.py --load_model "0" --wandb "tcm002" --proj_dir $PROJ_DIR --my_testing $MODEL_TYPE \
+python train.py --load_model "0" --wandb "tcm001" --proj_dir $PROJ_DIR --my_testing $MODEL_TYPE \
  --ctx_len $CTX_LEN --my_pile_stage 3 --epoch_count 999999 --epoch_begin 0 \
  --data_file "/root/RWKV-LM/RWKV-v5/data/test" --my_exit_tokens 64836 --magic_prime 11 \
  --num_nodes $N_NODE --micro_bsz $M_BSZ --n_layer $N_LAYER --n_embd $N_EMBD --pre_ffn 0 --head_qk 0 \
