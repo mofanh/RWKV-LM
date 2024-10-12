@@ -4,9 +4,11 @@ RWKV homepage: https://www.rwkv.com
 
 **RWKV-5/6 Eagle/Finch paper**: https://arxiv.org/abs/2404.05892
 
-**RWKV-6 3B** Demo: https://huggingface.co/spaces/BlinkDL/RWKV-Gradio-1
+**Awesome RWKV in Vision:** https://github.com/Yaziwel/Awesome-RWKV-in-Vision
 
-**RWKV-6 7B** Demo: https://huggingface.co/spaces/BlinkDL/RWKV-Gradio-2
+RWKV-6 3B Demo: https://huggingface.co/spaces/BlinkDL/RWKV-Gradio-1
+
+RWKV-6 7B Demo: https://huggingface.co/spaces/BlinkDL/RWKV-Gradio-2
 
 **RWKV-6 GPT-mode demo code (with comments and explanations)**: https://github.com/BlinkDL/RWKV-LM/blob/main/RWKV-v5/rwkv_v6_demo.py
 
@@ -16,16 +18,9 @@ RWKV-6 RNN-mode demo: https://github.com/BlinkDL/ChatRWKV/blob/main/RWKV_v6_demo
 
 ### HOW TO TEST TRAINING RWKV-5 on MiniPile (1.5G tokens) ###
 
-For reference, use python 3.10, torch==1.13.1+cu117, cuda 11.7.1
-
-For best performance, use python 3.10, torch 2.1.2+cu121 (or latest), cuda 12.3+, **latest deepspeed**, but **keep pytorch-lightning==1.9.5**
+For reference, use python 3.10, torch 2.3.1+cu121 (or latest), cuda 12.5+, **latest deepspeed**, but **keep pytorch-lightning==1.9.5**
 
 ```
-reference:
-pip install torch==1.13.1+cu117 --extra-index-url https://download.pytorch.org/whl/cu117
-pip install pytorch-lightning==1.9.5 deepspeed==0.7.0 wandb ninja
-
-best performance:
 pip install torch --upgrade --extra-index-url https://download.pytorch.org/whl/cu121
 pip install pytorch-lightning==1.9.5 deepspeed wandb ninja --upgrade
 
@@ -42,6 +37,8 @@ You can run your model using https://pypi.org/project/rwkv/ (use "rwkv_vocab_v20
 
 Use https://github.com/BlinkDL/RWKV-LM/blob/main/RWKV-v5/make_data.py to prepare binidx data from jsonl, and compute "--my_exit_tokens" and "--magic_prime".
 
+Much faster tokenizer of large data: https://github.com/cahya-wirawan/json2bin
+
 The "epoch" in train.py is "mini-epoch" (not real epoch. only for convenience), and 1 mini-epoch = 40320 * ctx_len tokens.
 
 For example, if your binidx has 1498226207 tokens and ctxlen=4096, set "--my_exit_tokens 1498226207" (this will override epoch_count), and it will be 1498226207/(40320 * 4096) = 9.07 miniepochs. The trainer will auto-exit after "--my_exit_tokens" tokens. Set "--magic_prime" to the largest 3n+2 prime smaller than datalen/ctxlen-1 (= 1498226207/4096-1 = 365776), which is "--magic_prime 365759" in this case.
@@ -55,6 +52,8 @@ advanced: repeat your SFT data 3 or 4 times in your jsonl (note make_data.py wil
 **Simple inference for RWKV-5**: https://github.com/BlinkDL/ChatRWKV/blob/main/RWKV_v5_demo.py
 
 **Simple inference for RWKV-6**: https://github.com/BlinkDL/ChatRWKV/blob/main/RWKV_v6_demo.py
+
+**Note: In [state = kv + w * state] everything must be in fp32 because w can be very close to 1. So we can keep state and w in fp32, and convert kv to fp32.**
 
 lm_eval: https://github.com/BlinkDL/ChatRWKV/blob/main/run_lm_eval.py
 
@@ -148,19 +147,19 @@ https://github.com/OpenGVLab/Vision-RWKV Vision RWKV
 
 https://github.com/feizc/Diffusion-RWKV Diffusion RWKV
 
-https://github.com/cgisky1980/ai00_rwkv_server Fastest WebGPU inference (nVidia/AMD/Intel), supports rwkv5 & rwkv6
+https://github.com/cgisky1980/ai00_rwkv_server Fastest WebGPU inference (nVidia/AMD/Intel)
 
 https://github.com/cryscan/web-rwkv backend for ai00_rwkv_server
 
-https://github.com/saharNooby/rwkv.cpp Fast CPU/cuBLAS/CLBlast inference: int4/int8/fp16/fp32, supports rwkv5
+https://github.com/saharNooby/rwkv.cpp Fast CPU/cuBLAS/CLBlast inference: int4/int8/fp16/fp32
 
-https://github.com/daquexian/faster-rwkv supports rwkv5
-
-https://github.com/mlc-ai/mlc-llm/pull/1275 supports rwkv5
+https://github.com/JL-er/RWKV-PEFT lora/pissa/Qlora/Qpissa/state tuning
 
 https://github.com/RWKV/RWKV-infctx-trainer Infctx trainer
 
-https://github.com/Blealtan/RWKV-LM-LoRA LoRA finetuning
+https://github.com/daquexian/faster-rwkv
+
+https://github.com/mlc-ai/mlc-llm/pull/1275
 
 https://github.com/TheRamU/Fay/blob/main/README_EN.md Digital Assistant with RWKV
 
