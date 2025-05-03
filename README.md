@@ -48,7 +48,7 @@ Chat demo code: https://github.com/BlinkDL/ChatRWKV/blob/main/API_DEMO_CHAT.py
 
 **RWKV-7 demo code**: https://github.com/BlinkDL/RWKV-LM/tree/main/RWKV-v7
 
-https://github.com/BlinkDL/RWKV-LM/blob/main/RWKV-v7/rwkv_v7_demo.py (GPT mode)
+https://github.com/BlinkDL/RWKV-LM/blob/main/RWKV-v7/rwkv_v7_demo.py (GPT-like mode)
 
 https://github.com/BlinkDL/RWKV-LM/blob/main/RWKV-v7/rwkv_v7_demo_rnn.py (RNN mode)
 
@@ -57,6 +57,41 @@ https://github.com/BlinkDL/RWKV-LM/blob/main/RWKV-v7/rwkv_v7_demo_fast.py (Both 
 RWKV-6 demo code: https://github.com/BlinkDL/RWKV-LM/blob/main/RWKV-v5/rwkv_v6_demo.py
 
 RWKV-6 demo code: https://github.com/BlinkDL/ChatRWKV/blob/main/RWKV_v6_demo.py
+
+## HOW TO TRAIN RWKV-7/6/5 on MiniPile (1.5G tokens) ##
+
+For reference, use python 3.10+, torch 2.5+, cuda 12.5+, latest deepspeed, but **keep pytorch-lightning==1.9.5**
+
+**Train RWKV-7:**
+```
+# you can use latest torch + latest cuda (not limited to cu121)
+pip install torch --upgrade --extra-index-url https://download.pytorch.org/whl/cu121
+pip install pytorch-lightning==1.9.5 deepspeed wandb ninja --upgrade
+
+# train RWKV-7
+cd RWKV-v7/train_temp/ 
+
+# download minipile .bin .idx to train_temp/data first (check demo-training-prepare.sh)
+# this will generate rwkv-init.pth in out/....../
+sh ./demo-training-prepare.sh
+
+# you may want to log in to wandb first
+sh ./demo-training-run.sh
+
+your out/....../train_log.txt should have losses similar to:
+0 4.875856 131.0863 0.00059975 2025-04-24 02:23:42.481256 0
+1 4.028621 56.1834 0.00059899 2025-04-24 02:28:16.674463 1
+2 3.801625 44.7739 0.00059773 2025-04-24 02:32:51.059568 2
+3 3.663070 38.9808 0.00059597 2025-04-24 02:37:25.409892 3
+4 3.578974 35.8368 0.00059371 2025-04-24 02:41:59.711315 4
+5 3.510906 33.4786 0.00059096 2025-04-24 02:46:33.990839 5
+6 3.462345 31.8917 0.00058771 2025-04-24 02:51:08.378331 6
+7 3.412196 30.3318 0.00058399 2025-04-24 02:55:42.927474 7
+8 3.376724 29.2747 0.00057978 2025-04-24 03:00:17.504665 8
+9 3.336911 28.1321 0.00057511 2025-04-24 03:04:52.006063 9
+10 3.313411 27.4787 0.00056999 2025-04-24 03:09:27.563336 10
+11 3.295895 27.0016 0.00056441 2025-04-24 03:14:01.786079 11
+```
 
 RWKV-7 weight example for 1.5B (L24-D2048, vocab 65536):
 | name                | shape         | comment      | initialization  |
@@ -104,23 +139,8 @@ RWKV-7 weight example for 1.5B (L24-D2048, vocab 65536):
 | ln_out.bias   | [2048]        |        | 0         |
 | head.weight   | [65536, 2048] | wdecay | see code  |
 
-## HOW TO TRAIN RWKV-5/6/7 on MiniPile (1.5G tokens) ##
+Train RWKV-6: use /RWKV-v5/ and use --my_testing "x060" in demo-training-prepare.sh and demo-training-run.sh
 
-For reference, use python 3.10+, torch 2.5+, cuda 12.5+, latest deepspeed, but **keep pytorch-lightning==1.9.5**
-
-**Train RWKV-7**: use /RWKV-v5/ and use --my_testing "x070" in demo-training-prepare.sh and demo-training-run.sh
-
-**Train RWKV-6**: use /RWKV-v5/ and use --my_testing "x060" in demo-training-prepare.sh and demo-training-run.sh
-
-```
-pip install torch --upgrade --extra-index-url https://download.pytorch.org/whl/cu121
-pip install pytorch-lightning==1.9.5 deepspeed wandb ninja --upgrade
-
-cd RWKV-v5/
-./demo-training-prepare.sh
-./demo-training-run.sh
-(you may want to log in to wandb first)
-```
 Your loss curve should look almost exactly the same as this, with the same ups and downs (if you use the same bsz & config):
 
 <img src="RWKV-v5-minipile.png" width="500">
