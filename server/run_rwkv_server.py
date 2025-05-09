@@ -338,6 +338,144 @@ async def generate_stream(
         # 发送错误信号
         yield json.dumps({"token": f"[ERROR: {str(e)}]", "session_id": session_id, "finished": True})
 
+class StatelessGenerationRequest(BaseModel):
+    prompt: str
+    max_length: int = Field(default=100, ge=1, le=1000)
+    temperature: float = Field(default=1.0, ge=0.1, le=2.0)
+    top_p: float = Field(default=0.7, ge=0.0, le=1.0)
+    stop_on_double_newline: bool = Field(default=False, description="如果为true，则在检测到'\\n\\n'时停止生成")
+    stream: bool = Field(default=False, description="是否使用流式输出")
+
+class StatelessGenerationResponse(BaseModel):
+    prompt: str
+    generated_text: str
+    execution_time: float
+
+@app.post("/generate_stateless", response_model=StatelessGenerationResponse)
+async def generate_stateless(request: StatelessGenerationRequest):
+    """无状态文本生成 - 每次都从头开始处理输入，不保存状态"""
+    global model, tokenizer
+    
+    if not model or not tokenizer:
+        logger.error("模型尚未加载")
+        raise HTTPException(status_code=503, detail="模型尚未加载")
+    
+    start_time = time.perf_counter()
+    prompt = request.prompt
+    logger.info(f"收到无状态生成请求: prompt_length={len(prompt)}, max_length={request.max_length}, stream={request.stream}")
+    
+    try:
+        # 编码输入文本
+        tokens = tokenizer.encode(prompt)
+        
+        # 从头开始处理输入
+        out, state = model.forward(tokens, None)
+        
+        # 如果是流式输出，使用StreamingResponse
+        if request.stream:
+            return StreamingResponse(
+                generate_stateless_stream(
+                    out.clone(),
+                    copy.deepcopy(state),
+                    request.max_length,
+                    request.temperature,
+                    request.top_p,
+                    prompt,
+                    request.stop_on_double_newline
+                ),
+                media_type="text/event-stream"  # 使用SSE格式
+            )
+        
+        # 非流式输出逻辑
+        all_tokens = []
+        generated_text = ""
+        
+        for i in range(request.max_length):
+            token = sample_logits(out, request.temperature, request.top_p)
+            all_tokens.append(token)
+            
+            # 检查是否应该在"\n\n"停止
+            if request.stop_on_double_newline and len(all_tokens) >= 2:
+                current_text = tokenizer.decode(all_tokens)
+                if "\n\n" in current_text:
+                    end_pos = current_text.find("\n\n") + 2  # 包含"\n\n"
+                    generated_text = current_text[:end_pos]
+                    break
+            
+            out, state = model.forward(token, state)
+        
+        # 如果没有提前结束，解码所有生成的token
+        if not generated_text:
+            generated_text = tokenizer.decode(all_tokens)
+        
+        logger.info(f"完成无状态生成: tokens={len(all_tokens)}")
+        
+        return StatelessGenerationResponse(
+            prompt=prompt,
+            generated_text=generated_text,
+            execution_time=time.perf_counter() - start_time
+        )
+    except Exception as e:
+        logger.error(f"无状态生成过程中出错: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"生成过程中出错: {str(e)}")
+
+async def generate_stateless_stream(out, state, max_length, temperature, top_p, prompt, stop_on_double_newline=False):
+    """无状态生成的流式输出"""
+    try:
+        # 首先发送提示词
+        yield f"data: {json.dumps({'token': prompt, 'finished': False})}\n\n"
+        
+        out_last = 0
+        all_tokens = []
+        accumulated_text = ""
+        
+        for i in range(max_length):
+            token = sample_logits(out, temperature, top_p)
+            all_tokens.append(token)
+            
+            # 尝试解码当前token
+            try:
+                tmp = tokenizer.decode(all_tokens[out_last:])
+                if "\ufffd" not in tmp:  # 确保是有效的UTF-8字符串
+                    yield f"data: {json.dumps({'token': tmp, 'finished': False})}\n\n"
+                    accumulated_text += tmp
+                    out_last = i + 1
+                    
+                    # 检查是否需要在"\n\n"处停止
+                    if stop_on_double_newline and "\n\n" in accumulated_text:
+                        # 发送完成信号
+                        yield f"data: {json.dumps({'token': '', 'finished': True})}\n\n"
+                        logger.info(f"无状态流式生成已完成: tokens={len(all_tokens)}, 在双换行符处停止")
+                        return
+            except:
+                # 如果解码失败，继续尝试后续token
+                pass
+            
+            # 生成下一个token
+            out, state = model.forward(token, state)
+            
+            # 适当的速率控制，防止服务器过载
+            await asyncio.sleep(0.01)
+        
+        # 确保所有剩余tokens都被解码
+        if out_last < len(all_tokens):
+            try:
+                tmp = tokenizer.decode(all_tokens[out_last:])
+                if tmp:
+                    yield f"data: {json.dumps({'token': tmp, 'finished': False})}\n\n"
+            except:
+                pass
+        
+        # 发送完成信号
+        yield f"data: {json.dumps({'token': '', 'finished': True})}\n\n"
+        
+        logger.info(f"无状态流式生成完成: tokens={len(all_tokens)}")
+    
+    except Exception as e:
+        logger.error(f"无状态流式生成过程中出错: {str(e)}")
+        # 发送错误信号
+        yield f"data: {json.dumps({'token': f'[ERROR: {str(e)}]', 'finished': True})}\n\n"
+
 @app.post("/continue")
 async def continue_generation(request: GenerationRequest):
     """继续基于现有会话进行生成"""
