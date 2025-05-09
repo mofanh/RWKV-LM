@@ -72,6 +72,7 @@ class GenerationRequest(BaseModel):
     session_id: Optional[str] = None
     stream: bool = False
     isDialog: bool = Field(default=False, description="如果为true，则在检测到'\\n\\n'时停止生成")
+    return_only_generated: bool = Field(default=False, description="如果为true，则仅返回生成的文本，不包含原始输入")
 
 class GenerationResponse(BaseModel):
     generated_text: str
@@ -177,15 +178,19 @@ async def generate_text(request: GenerationRequest):
             model_states[session_id] = (init_out, copy.deepcopy(init_state))
             
             if not request.stream:
-                return GenerationResponse(
-                    generated_text=prompt,
-                    session_id=session_id,
-                    execution_time=time.perf_counter() - start_time
-                )
+                # 如果仅返回生成的文本，不需要立即返回，等待生成
+                if not request.return_only_generated:
+                    return GenerationResponse(
+                        generated_text=prompt,
+                        session_id=session_id,
+                        execution_time=time.perf_counter() - start_time
+                    )
             else:
-                # 对于流式输出，我们返回提示词
+                # 对于流式输出
                 async def stream_init_response():
-                    yield json.dumps({"token": prompt, "session_id": session_id, "finished": False})
+                    # 如果不仅返回生成的内容，则先返回输入内容
+                    if not request.return_only_generated:
+                        yield json.dumps({"token": prompt, "session_id": session_id, "finished": False})
                     yield json.dumps({"token": "", "session_id": session_id, "finished": True})
                 
                 return StreamingResponse(stream_init_response(), media_type="application/json")
@@ -203,7 +208,8 @@ async def generate_text(request: GenerationRequest):
                 request.max_length, 
                 request.temperature, 
                 request.top_p,
-                request.isDialog
+                request.isDialog,
+                request.return_only_generated
             ),
             media_type="application/json"
         )
@@ -217,7 +223,8 @@ async def generate_text(request: GenerationRequest):
         request.temperature, 
         request.top_p, 
         start_time,
-        request.isDialog
+        request.isDialog,
+        request.return_only_generated
     )
 
 async def generate_normal(
@@ -228,7 +235,8 @@ async def generate_normal(
     temperature, 
     top_p, 
     start_time,
-    isDialog=False
+    isDialog=False,
+    return_only_generated=False
 ):
     """常规文本生成（非流式）"""
     try:
@@ -269,7 +277,7 @@ async def generate_normal(
     except Exception as e:
         logger.error(f"生成过程中出错: {str(e)}")
         raise HTTPException(status_code=500, detail=f"生成过程中出错: {str(e)}")
-    
+
 async def generate_stream(
     init_out, 
     init_state, 
@@ -277,7 +285,8 @@ async def generate_stream(
     max_length, 
     temperature, 
     top_p,
-    isDialog=False
+    isDialog=False,
+    return_only_generated=False
 ):
     """流式文本生成"""
     try:
@@ -294,7 +303,8 @@ async def generate_stream(
             try:
                 tmp = tokenizer.decode(all_tokens[out_last:])
                 if "\ufffd" not in tmp:  # 确保是有效的UTF-8字符串
-                    yield json.dumps({"token": tmp, "session_id": session_id, "finished": False})
+                    # 设置 ensure_ascii=False，避免Unicode转义
+                    yield json.dumps({"token": tmp, "session_id": session_id, "finished": False}, ensure_ascii=False)
                     accumulated_text += tmp
                     out_last = i + 1
                     
@@ -303,7 +313,7 @@ async def generate_stream(
                         # 更新会话状态
                         model_states[session_id] = (out, copy.deepcopy(state))
                         # 发送完成信号
-                        yield json.dumps({"token": "", "session_id": session_id, "finished": True})
+                        yield json.dumps({"token": "", "session_id": session_id, "finished": True}, ensure_ascii=False)
                         logger.info(f"对话模式流式生成已完成: session={session_id}, tokens={len(all_tokens)}")
                         return
             except:
@@ -346,6 +356,7 @@ class StatelessGenerationRequest(BaseModel):
     stop_on_double_newline: bool = Field(default=False, description="如果为true，则在检测到'\\n\\n'时停止生成")
     isDialog: bool = Field(default=False, description="如果为true，则在检测到'\\n\\n'时停止生成（与stop_on_double_newline功能相同）")
     stream: bool = Field(default=False, description="是否使用流式输出")
+    return_only_generated: bool = Field(default=False, description="如果为true，则仅返回生成的文本，不包含原始输入")
 
 class StatelessGenerationResponse(BaseModel):
     prompt: str
@@ -385,7 +396,8 @@ async def generate_stateless(request: StatelessGenerationRequest):
                     request.temperature,
                     request.top_p,
                     prompt,
-                    stop_on_newlines
+                    stop_on_newlines,
+                    request.return_only_generated
                 ),
                 media_type="text/event-stream"  # 使用SSE格式
             )
@@ -415,7 +427,7 @@ async def generate_stateless(request: StatelessGenerationRequest):
         logger.info(f"完成无状态生成: tokens={len(all_tokens)}")
         
         return StatelessGenerationResponse(
-            prompt=prompt,
+            prompt="" if request.return_only_generated else prompt,
             generated_text=generated_text,
             execution_time=time.perf_counter() - start_time
         )
@@ -423,11 +435,12 @@ async def generate_stateless(request: StatelessGenerationRequest):
         logger.error(f"无状态生成过程中出错: {str(e)}")
         raise HTTPException(status_code=500, detail=f"生成过程中出错: {str(e)}")
 
-async def generate_stateless_stream(out, state, max_length, temperature, top_p, prompt, stop_on_newlines=False):
+async def generate_stateless_stream(out, state, max_length, temperature, top_p, prompt, stop_on_newlines=False, return_only_generated=False):
     """无状态生成的流式输出"""
     try:
-        # 首先发送提示词，确保不使用Unicode转义
-        yield f"data: {json.dumps({'token': prompt, 'finished': False}, ensure_ascii=False)}\n\n"
+        # 首先发送提示词，如果不是只返回生成内容
+        if not return_only_generated:
+            yield f"data: {json.dumps({'token': prompt, 'finished': False}, ensure_ascii=False)}\n\n"
         
         out_last = 0
         all_tokens = []

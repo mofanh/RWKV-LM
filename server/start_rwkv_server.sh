@@ -4,7 +4,7 @@
 # 使用方法: ./start_rwkv_server.sh [port] [gpu_id]
 
 # 设置默认值
-PORT="${1:-8002}"
+PORT="${1:-8001}"
 GPU_ID="${2:-0}"
 LOG_FILE="rwkv_server_$(date +%Y%m%d_%H%M%S).log"
 
