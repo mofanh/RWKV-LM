@@ -344,6 +344,7 @@ class StatelessGenerationRequest(BaseModel):
     temperature: float = Field(default=1.0, ge=0.1, le=2.0)
     top_p: float = Field(default=0.7, ge=0.0, le=1.0)
     stop_on_double_newline: bool = Field(default=False, description="如果为true，则在检测到'\\n\\n'时停止生成")
+    isDialog: bool = Field(default=False, description="如果为true，则在检测到'\\n\\n'时停止生成（与stop_on_double_newline功能相同）")
     stream: bool = Field(default=False, description="是否使用流式输出")
 
 class StatelessGenerationResponse(BaseModel):
@@ -364,6 +365,9 @@ async def generate_stateless(request: StatelessGenerationRequest):
     prompt = request.prompt
     logger.info(f"收到无状态生成请求: prompt_length={len(prompt)}, max_length={request.max_length}, stream={request.stream}")
     
+    # 合并两个控制参数
+    stop_on_newlines = request.stop_on_double_newline or request.isDialog
+    
     try:
         # 编码输入文本
         tokens = tokenizer.encode(prompt)
@@ -381,7 +385,7 @@ async def generate_stateless(request: StatelessGenerationRequest):
                     request.temperature,
                     request.top_p,
                     prompt,
-                    request.stop_on_double_newline
+                    stop_on_newlines
                 ),
                 media_type="text/event-stream"  # 使用SSE格式
             )
@@ -395,7 +399,7 @@ async def generate_stateless(request: StatelessGenerationRequest):
             all_tokens.append(token)
             
             # 检查是否应该在"\n\n"停止
-            if request.stop_on_double_newline and len(all_tokens) >= 2:
+            if stop_on_newlines and len(all_tokens) >= 2:
                 current_text = tokenizer.decode(all_tokens)
                 if "\n\n" in current_text:
                     end_pos = current_text.find("\n\n") + 2  # 包含"\n\n"
@@ -419,7 +423,7 @@ async def generate_stateless(request: StatelessGenerationRequest):
         logger.error(f"无状态生成过程中出错: {str(e)}")
         raise HTTPException(status_code=500, detail=f"生成过程中出错: {str(e)}")
 
-async def generate_stateless_stream(out, state, max_length, temperature, top_p, prompt, stop_on_double_newline=False):
+async def generate_stateless_stream(out, state, max_length, temperature, top_p, prompt, stop_on_newlines=False):
     """无状态生成的流式输出"""
     try:
         # 首先发送提示词
@@ -442,7 +446,7 @@ async def generate_stateless_stream(out, state, max_length, temperature, top_p, 
                     out_last = i + 1
                     
                     # 检查是否需要在"\n\n"处停止
-                    if stop_on_double_newline and "\n\n" in accumulated_text:
+                    if stop_on_newlines and "\n\n" in accumulated_text:
                         # 发送完成信号
                         yield f"data: {json.dumps({'token': '', 'finished': True})}\n\n"
                         logger.info(f"无状态流式生成已完成: tokens={len(all_tokens)}, 在双换行符处停止")
