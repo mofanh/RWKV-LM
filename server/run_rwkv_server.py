@@ -426,8 +426,8 @@ async def generate_stateless(request: StatelessGenerationRequest):
 async def generate_stateless_stream(out, state, max_length, temperature, top_p, prompt, stop_on_newlines=False):
     """无状态生成的流式输出"""
     try:
-        # 首先发送提示词
-        yield f"data: {json.dumps({'token': prompt, 'finished': False})}\n\n"
+        # 首先发送提示词，确保不使用Unicode转义
+        yield f"data: {json.dumps({'token': prompt, 'finished': False}, ensure_ascii=False)}\n\n"
         
         out_last = 0
         all_tokens = []
@@ -441,14 +441,15 @@ async def generate_stateless_stream(out, state, max_length, temperature, top_p, 
             try:
                 tmp = tokenizer.decode(all_tokens[out_last:])
                 if "\ufffd" not in tmp:  # 确保是有效的UTF-8字符串
-                    yield f"data: {json.dumps({'token': tmp, 'finished': False})}\n\n"
+                    # 确保使用ensure_ascii=False输出原始UTF-8文本
+                    yield f"data: {json.dumps({'token': tmp, 'finished': False}, ensure_ascii=False)}\n\n"
                     accumulated_text += tmp
                     out_last = i + 1
                     
                     # 检查是否需要在"\n\n"处停止
                     if stop_on_newlines and "\n\n" in accumulated_text:
                         # 发送完成信号
-                        yield f"data: {json.dumps({'token': '', 'finished': True})}\n\n"
+                        yield f"data: {json.dumps({'token': '', 'finished': True}, ensure_ascii=False)}\n\n"
                         logger.info(f"无状态流式生成已完成: tokens={len(all_tokens)}, 在双换行符处停止")
                         return
             except:
@@ -466,19 +467,19 @@ async def generate_stateless_stream(out, state, max_length, temperature, top_p, 
             try:
                 tmp = tokenizer.decode(all_tokens[out_last:])
                 if tmp:
-                    yield f"data: {json.dumps({'token': tmp, 'finished': False})}\n\n"
+                    yield f"data: {json.dumps({'token': tmp, 'finished': False}, ensure_ascii=False)}\n\n"
             except:
                 pass
         
         # 发送完成信号
-        yield f"data: {json.dumps({'token': '', 'finished': True})}\n\n"
+        yield f"data: {json.dumps({'token': '', 'finished': True}, ensure_ascii=False)}\n\n"
         
         logger.info(f"无状态流式生成完成: tokens={len(all_tokens)}")
     
     except Exception as e:
         logger.error(f"无状态流式生成过程中出错: {str(e)}")
         # 发送错误信号
-        yield f"data: {json.dumps({'token': f'[ERROR: {str(e)}]', 'finished': True})}\n\n"
+        yield f"data: {json.dumps({'token': f'[ERROR: {str(e)}]', 'finished': True}, ensure_ascii=False)}\n\n"
 
 @app.post("/continue")
 async def continue_generation(request: GenerationRequest):
