@@ -390,6 +390,7 @@ def RWKV_x070_TMix_one(
     )
     return (xx * g) @ O_, x, state, v_first
 
+
 @MyStatic
 def RWKV_x070_TMix_seq(
     layer_id: int,
@@ -453,8 +454,15 @@ def RWKV_x070_TMix_seq(
     else:
         v = v + (v_first - v) * torch.sigmoid(v0 + (xv @ v1) @ v2)
 
-    w = -torch.nn.functional.softplus(-(w0 + w)) - 0.5
-    xx = RWKV7_OP(state, r, w, k, v, -kk, kk * a)
+    # 直接使用循环来替换 RWKV7_OP
+    w = torch.exp(-0.606531 * torch.sigmoid((w0 + w).float()))  # 0.606531 = exp(-0.5)
+    xx = torch.empty_like(x)
+    for t in range(T):
+        r_, w_, k_, v_, kk_, a_ = r[t], w[t], k[t], v[t], kk[t], a[t]
+        vk = v_.view(H,N,1) @ k_.view(H,1,N)
+        ab = (-kk_).view(H,N,1) @ (kk_*a_).view(H,1,N)
+        state = state * w_.view(H,1,N) + state @ ab.float() + vk.float()
+        xx[t] = (state.to(dtype=x.dtype) @ r_.view(H,N,1)).view(H*N)
 
     xx = torch.nn.functional.group_norm(
         xx.view(T, H * N), num_groups=H, weight=ln_w, bias=ln_b, eps=64e-5

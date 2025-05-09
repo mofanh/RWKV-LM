@@ -71,6 +71,7 @@ class GenerationRequest(BaseModel):
     top_p: float = Field(default=0.7, ge=0.0, le=1.0)
     session_id: Optional[str] = None
     stream: bool = False
+    isDialog: bool = Field(default=False, description="如果为true，则在检测到'\\n\\n'时停止生成")
 
 class GenerationResponse(BaseModel):
     generated_text: str
@@ -201,7 +202,8 @@ async def generate_text(request: GenerationRequest):
                 session_id, 
                 request.max_length, 
                 request.temperature, 
-                request.top_p
+                request.top_p,
+                request.isDialog
             ),
             media_type="application/json"
         )
@@ -214,7 +216,8 @@ async def generate_text(request: GenerationRequest):
         request.max_length, 
         request.temperature, 
         request.top_p, 
-        start_time
+        start_time,
+        request.isDialog
     )
 
 async def generate_normal(
@@ -224,24 +227,37 @@ async def generate_normal(
     max_length, 
     temperature, 
     top_p, 
-    start_time
+    start_time,
+    isDialog=False
 ):
     """常规文本生成（非流式）"""
     try:
         out, state = init_out.clone(), copy.deepcopy(init_state)
         all_tokens = []
+        generated_text = ""
         
         for i in range(max_length):
             token = sample_logits(out, temperature, top_p)
             all_tokens.append(token)
             
+            # 每生成几个token，检查是否出现了"\n\n"
+            if isDialog and len(all_tokens) >= 2:
+                current_text = tokenizer.decode(all_tokens)
+                if "\n\n" in current_text:
+                    # 如果找到 "\n\n"，截断到该位置
+                    end_pos = current_text.find("\n\n") + 2  # 包含"\n\n"
+                    generated_text = current_text[:end_pos]
+                    # 注意：这里可能需要重新编码和解码，以确保token边界对齐
+                    break
+            
             out, state = model.forward(token, state)
+        
+        # 如果没有提前结束，解码所有生成的token
+        if not generated_text:
+            generated_text = tokenizer.decode(all_tokens)
         
         # 更新会话状态
         model_states[session_id] = (out, copy.deepcopy(state))
-        
-        # 解码生成的文本
-        generated_text = tokenizer.decode(all_tokens)
         
         logger.info(f"完成生成: session={session_id}, tokens={len(all_tokens)}")
         
@@ -253,20 +269,22 @@ async def generate_normal(
     except Exception as e:
         logger.error(f"生成过程中出错: {str(e)}")
         raise HTTPException(status_code=500, detail=f"生成过程中出错: {str(e)}")
-
+    
 async def generate_stream(
     init_out, 
     init_state, 
     session_id, 
     max_length, 
     temperature, 
-    top_p
+    top_p,
+    isDialog=False
 ):
     """流式文本生成"""
     try:
         out, state = init_out.clone(), copy.deepcopy(init_state)
         out_last = 0
         all_tokens = []
+        accumulated_text = ""
         
         for i in range(max_length):
             token = sample_logits(out, temperature, top_p)
@@ -277,7 +295,17 @@ async def generate_stream(
                 tmp = tokenizer.decode(all_tokens[out_last:])
                 if "\ufffd" not in tmp:  # 确保是有效的UTF-8字符串
                     yield json.dumps({"token": tmp, "session_id": session_id, "finished": False})
+                    accumulated_text += tmp
                     out_last = i + 1
+                    
+                    # 检查是否为对话模式且出现了"\n\n"
+                    if isDialog and "\n\n" in accumulated_text:
+                        # 更新会话状态
+                        model_states[session_id] = (out, copy.deepcopy(state))
+                        # 发送完成信号
+                        yield json.dumps({"token": "", "session_id": session_id, "finished": True})
+                        logger.info(f"对话模式流式生成已完成: session={session_id}, tokens={len(all_tokens)}")
+                        return
             except:
                 # 如果解码失败，继续尝试后续token
                 pass
